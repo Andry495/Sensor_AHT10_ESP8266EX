@@ -1,0 +1,189 @@
+esphome:
+  name: th-sens
+  friendly_name: TH Sensor
+  # Уникальность в сети/HA: th-sens-<mac>
+  name_add_mac_suffix: true
+  project:
+    name: th_sens.aht10
+    version: "1.3.0"
+
+esp8266:
+  board: nodemcuv2
+  restore_from_flash: true
+
+logger:
+  # DEBUG как на эталонных датчиках — в Log видно Sending state Temp/Lucht
+  level: DEBUG
+  logs:
+    wifi: INFO
+    wifi_esp8266: WARN
+    api: INFO
+    web_server: INFO
+    scheduler: INFO
+    sensor.filter: INFO
+    text_sensor: INFO
+    mdns: INFO
+
+# Полная совместимость с Home Assistant (нативный API :6053)
+api:
+  encryption:
+    key: !secret api_encryption_key
+  # 0s = не перезагружать устройство, если HA/клиент API долго не подключён
+  # (важно при работе только с Prometheus/веб без постоянной интеграции HA)
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+  - platform: web_server
+
+# Wi‑Fi STA в прошивку НЕ зашивается.
+# После USB‑флеша: подключитесь к AP → captive portal → укажите SSID/пароль.
+# Credentials сохраняются во flash; factory reset сбрасывает их.
+wifi:
+  ap:
+    ssid: "TH-Sens-Setup"
+    password: "thsens5011"
+  power_save_mode: NONE
+
+# Портал настройки: http://192.168.4.1/ (пока устройство в режиме AP)
+captive_portal:
+
+# Интерфейс как у ESPHome-датчиков (web_server v2 + REST/SSE)
+web_server:
+  port: 80
+  version: 2
+  log: true
+
+# Свой UI на / (порт 80). ESPHome/HA UI: /esp. Prometheus: /prom
+external_components:
+  - source:
+      type: local
+      path: extra_components
+
+custom_ui:
+
+binary_sensor:
+  - platform: status
+    name: "Status"
+
+  # FLASH/BOOT: удержание ≥5с → factory reset
+  - platform: gpio
+    pin:
+      number: GPIO0
+      mode: INPUT_PULLUP
+      inverted: true
+    name: "Boot Button"
+    internal: true
+    on_click:
+      min_length: 5s
+      max_length: 30s
+      then:
+        - button.press: factory_reset_btn
+
+button:
+  - platform: restart
+    name: "Restart"
+
+  - platform: factory_reset
+    id: factory_reset_btn
+    name: "Factory Reset"
+    entity_category: diagnostic
+
+# Калибровка под эталон (ifs-std002 и т.п.): смещения сохраняются во flash,
+# правятся в нашем UI (/) и в ESPHome UI (/esp). Одинаковые дефолты на всех платах.
+number:
+  - platform: template
+    name: "Temp Offset"
+    id: temp_offset
+    unit_of_measurement: "°C"
+    entity_category: config
+    mode: box
+    min_value: -10
+    max_value: 10
+    step: 0.1
+    # Типичный самонагрев ESP+AHT10 относительно эталона ~25°C
+    initial_value: -2.0
+    optimistic: true
+    restore_value: true
+    on_value:
+      # Не дергаем AHT10 сразу: фильтр применится на следующем опросе (10 с)
+      - logger.log:
+          format: "Temp offset set to %.1f"
+          args: [ 'x' ]
+
+  - platform: template
+    name: "Humidity Offset"
+    id: humidity_offset
+    unit_of_measurement: "%"
+    entity_category: config
+    mode: box
+    min_value: -20
+    max_value: 20
+    step: 0.1
+    initial_value: 4.0
+    optimistic: true
+    restore_value: true
+    on_value:
+      - logger.log:
+          format: "Humidity offset set to %.1f"
+          args: [ 'x' ]
+
+i2c:
+  sda: GPIO4
+  scl: GPIO5
+  scan: true
+
+sensor:
+  - platform: aht10
+    id: aht10_sensor
+    variant: AHT10
+    temperature:
+      name: "Temp"
+      id: sens_temp
+      accuracy_decimals: 1
+      state_class: measurement
+      device_class: temperature
+      filters:
+        - lambda: |-
+            float off = id(temp_offset).has_state() ? id(temp_offset).state : -2.0f;
+            return x + off;
+      on_value:
+        - logger.log:
+            level: INFO
+            format: "Temp=%.1f °C  Lucht=%.2f %%"
+            args: [ 'x', 'id(sens_lucht).state' ]
+    humidity:
+      name: "Lucht"
+      id: sens_lucht
+      accuracy_decimals: 2
+      state_class: measurement
+      device_class: humidity
+      filters:
+        - lambda: |-
+            float off = id(humidity_offset).has_state() ? id(humidity_offset).state : 4.0f;
+            return x + off;
+        - clamp:
+            min_value: 0
+            max_value: 100
+    # Datasheet AHT10: не чаще 1 раза / 2 с (иначе самонагрев >0.1°C).
+    # 10 с — запас по нагреву и нагрузке на I2C при питании от БП.
+    update_interval: 10s
+
+  - platform: wifi_signal
+    name: "WiFi"
+    id: wifi_signal_sensor
+    update_interval: 60s
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP"
+      entity_category: diagnostic
+    ssid:
+      name: "SSID"
+      entity_category: diagnostic
+    mac_address:
+      name: "MAC"
+      entity_category: diagnostic

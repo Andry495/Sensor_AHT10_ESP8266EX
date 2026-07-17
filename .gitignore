@@ -1,0 +1,30 @@
+# Secrets
+**/secrets.yaml
+**/secrets.yaml.localbak
+!**/secrets.yaml.example
+firmware/release_keys.txt
+
+# ESPHome / PlatformIO build artifacts
+**/.esphome/
+**/.pio/
+**/.pioenvs/
+**/.piolibdeps/
+**/build/
+**/build_esp8266/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local tooling / temp
+*.log
+*.tmp
