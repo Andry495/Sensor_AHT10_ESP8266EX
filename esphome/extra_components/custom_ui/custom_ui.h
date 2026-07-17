@@ -6,6 +6,9 @@
 #include "esphome/components/web_server_base/web_server_base.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#ifdef USE_API
+#include "esphome/components/api/api_server.h"
+#endif
 #ifdef USE_NUMBER
 #include "esphome/components/number/number.h"
 #endif
@@ -254,13 +257,24 @@ class CustomUI : public AsyncWebHandler, public Component {
     }
 #endif
 
-    char buf[512];
+    std::string api_key;
+#ifdef USE_API
+    if (api::global_api_server != nullptr) {
+      auto &ctx = api::global_api_server->get_noise_ctx();
+      if (ctx.has_psk()) {
+        const auto &psk = ctx.get_psk();
+        api_key = base64_encode(psk.data(), psk.size());
+      }
+    }
+#endif
+
+    char buf[640];
     snprintf(buf, sizeof(buf),
              "{\"ok\":true,\"hostname\":\"%s\",\"ip\":\"%s\",\"ssid\":\"%s\","
              "\"t\":%.2f,\"rh\":%.2f,\"rssi\":%d,\"temp_offset\":%.2f,\"humidity_offset\":%.2f,"
-             "\"prom\":\"/prom\"}",
+             "\"api_encryption_key\":\"%s\",\"prom\":\"/prom\"}",
              App.get_name().c_str(), WiFi.localIP().toString().c_str(), WiFi.SSID().c_str(), t, h, WiFi.RSSI(), t_off,
-             h_off);
+             h_off, api_key.c_str());
     request->send(200, "application/json", buf);
   }
 
@@ -309,6 +323,14 @@ a.primary,button.primary{background:var(--acc);border-color:transparent;color:#0
   <div><span>RSSI</span><strong id="rssi">—</strong></div>
 </div>
 <div class="card" style="margin-top:12px">
+  <div class="label">Home Assistant — Encryption key</div>
+  <p class="note" style="margin:8px 0 10px">Вставьте этот ключ при добавлении интеграции ESPHome в HA.</p>
+  <code id="apikey" style="display:block;word-break:break-all;background:#0a1020;border:1px solid var(--line);border-radius:10px;padding:12px;font-size:.85rem">—</code>
+  <div class="actions" style="margin-top:10px">
+    <button class="primary" id="copyKey" type="button">Копировать ключ</button>
+  </div>
+</div>
+<div class="card" style="margin-top:12px">
   <div class="label">Калибровка (сохраняется во flash)</div>
   <div class="calib">
     <label>Temp offset °C<input id="toff" type="number" step="0.1" min="-10" max="10"></label>
@@ -355,6 +377,20 @@ document.getElementById('saveCal').onclick=async ()=>{
   }catch(e){ addLog('[E] calibration save failed: '+(e&&e.message?e.message:e)); }
   finally{ btn.disabled=false; }
 };
+document.getElementById('copyKey').onclick=async ()=>{
+  const key=document.getElementById('apikey').textContent||'';
+  if(!key || key==='—'){ addLog('[W] encryption key empty'); return; }
+  try{
+    await navigator.clipboard.writeText(key);
+    addLog('[I] encryption key copied');
+  }catch(e){
+    try{
+      const ta=document.createElement('textarea'); ta.value=key; document.body.appendChild(ta);
+      ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+      addLog('[I] encryption key copied');
+    }catch(e2){ addLog('[E] copy failed'); }
+  }
+};
 async function tick(){
   try{
     const j=await (await fetch('/ui/api')).json();
@@ -363,6 +399,7 @@ async function tick(){
     document.getElementById('ip').textContent=j.ip||'—';
     document.getElementById('ssid').textContent=j.ssid||'—';
     document.getElementById('rssi').textContent=(j.rssi??'—')+' dBm';
+    if(j.api_encryption_key) document.getElementById('apikey').textContent=j.api_encryption_key;
     if(j.ok && Number.isFinite(j.t)) document.getElementById('t').innerHTML=j.t.toFixed(1)+'<span class="unit">°C</span>';
     if(j.ok && Number.isFinite(j.rh)) document.getElementById('h').innerHTML=j.rh.toFixed(1)+'<span class="unit">%</span>';
     if(Number.isFinite(j.temp_offset) && document.activeElement!==document.getElementById('toff'))
