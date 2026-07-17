@@ -319,6 +319,7 @@ Friendly name в UI/HA: `TH Sensor XXXXXX`.
   "rssi": -59,
   "temp_offset": -1.0,
   "humidity_offset": 0.4,
+  "api_encryption_key": "2vPQjhoXA7O4xUGLkt6Dc2abu238DQfxGI+tAEM5+y4=",
   "prom": "/prom"
 }
 ```
